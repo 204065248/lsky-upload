@@ -1,4 +1,0 @@
-const tinify = require("tinify");
-tinify.key = "YOUR_API_KEY";
-const source = tinify.fromFile("unoptimized.webp");
-source.toFile("optimized.webp");
