@@ -1,5 +1,5 @@
 {
-  "name": "lsky-upload",
+  "name": "lsky-images",
   "displayName": "Lsky 图床",
   "description": "lsky 图床 markdown 插件",
   "keywords": [
@@ -58,13 +58,18 @@
         },
         "lsky.tempPath": {
           "type": "string",
-          "default": ".tmp",
+          "default": ".images",
           "description": "临时图片存储路径"
         },
         "lsky.strategyId": {
           "type": "integer",
           "default": 1,
           "description": "图床中储存策略id"
+        },
+        "lsky.keepLocalPict": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否保留本地图片"
         }
       }
     },

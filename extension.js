@@ -147,8 +147,9 @@ async function getNewUrl(imageUrl, progress) {
     return;
   }
   try {
-    let imagePath = await downloadImage(imageUrl, localPath);
+    let imagePath = await downloadImage(imageUrl, localPath, progress);
     let links = await lskyUpload(config, imagePath, progress);
+    await deleteLocalPict(imagePath);
     return links;
   } catch (err) {
     progress.report({ increment: 100, message: "上传失败！" + err.message });
@@ -197,8 +198,16 @@ function saveImg(progress) {
       progress.report({ increment: 100, message: "上传成功！" });
       uploaded = true;
     })
+    .then(() => deleteLocalPict(imagePath))
     .catch((err) => {
-      progress.report({ increment: 100, message: "上传失败！" + err?.message });
+      if (err === undefined || err === null) {
+        progress.report({ increment: 100, message: "上传失败！" });
+      } else {
+        progress.report({
+          increment: 100,
+          message: "上传失败！" + err.message,
+        });
+      }
     });
 }
 
@@ -385,10 +394,24 @@ function saveClipboardImageToFileAndGetPath(imagePath, progress) {
     }
   });
 }
+
 function isUrl(str) {
   return /[a-zA-z]+:\/\/[^\s]*/.test(str);
 }
-async function downloadImage(imageUrl, localPath) {
+
+// 递归创建目录 同步方法
+function mkdirsSync(dirname) {
+  if (fs.existsSync(dirname)) {
+    return true;
+  } else {
+    if (mkdirsSync(path.dirname(dirname))) {
+      fs.mkdirSync(dirname);
+      return true;
+    }
+  }
+}
+
+async function downloadImage(imageUrl, localPath, progress) {
   // 获取当前编辑文件
   let editor = vscode.window.activeTextEditor;
   if (!editor) return "";
@@ -403,9 +426,16 @@ async function downloadImage(imageUrl, localPath) {
   }
   // @ts-ignore
   if (!isUrl(imageUrl)) {
-    // let filePath = fileUri.fsPath;
-    // let imagePath = getImagePath(filePath, selectText, localPath);
-    return imageUrl;
+    // 图片本地保存路径
+    let filePath = fileUri.fsPath;
+    let folderPath = path.dirname(filePath);
+    let imagePath = "";
+    if (path.isAbsolute(imageUrl)) {
+      imagePath = path.join(localPath, imageUrl);
+    } else {
+      imagePath = path.join(folderPath, "/", imageUrl);
+    }
+    return imagePath;
   }
   const response = await axios({
     url: imageUrl,
@@ -433,28 +463,34 @@ async function downloadImage(imageUrl, localPath) {
   let folderPath = path.dirname(filePath);
   let imagePath = "";
   if (path.isAbsolute(localPath)) {
+    folderPath = localPath;
     imagePath = path.join(localPath, imageFileName);
   } else {
-    imagePath = path.join(folderPath, localPath, imageFileName);
+    folderPath = path.join(folderPath, localPath);
+    imagePath = path.join(folderPath, imageFileName);
   }
+
+  // 创建文件夹
+  mkdirsSync(folderPath);
 
   const writer = fs.createWriteStream(imagePath);
   response.data.pipe(writer);
 
   return new Promise((resolve, reject) => {
     writer.on("finish", () => {
-      resolve(imgPath);
+      resolve(imagePath);
     });
 
     writer.on("error", reject);
   });
 }
 
-function preHandleUrl(imageUrl) {
-  if (imageUrl.includes("img-blog.csdn.net")) {
-    // 检查字符串是否包含 "img-blog.csdn.net"
-    imageUrl = imageUrl.split("?")[0]; // 使用 split() 方法获取 "?" 前的字符串
-    console.log("csdn 去水印图片地址: " + imageUrl);
+async function deleteLocalPict(imagePath) {
+  const _fs = require("fs").promises;
+  if (config.keepLocalPict === false) {
+    let stat = await _fs.stat(imagePath);
+    if (stat.isFile()) {
+      await _fs.unlink(imagePath);
+    }
   }
-  return imageUrl;
 }
