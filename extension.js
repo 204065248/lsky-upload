@@ -9,6 +9,7 @@ const { spawn } = require("child_process");
 const https = require("https");
 
 var uploaded = false;
+var isSuccess = false;
 const config = vscode.workspace.getConfiguration("lsky");
 // 当你的扩展被激活时，这个方法被调用
 // 第一次执行命令时激活扩展名
@@ -43,8 +44,6 @@ function activate(context) {
     );
   });
 
-  context.subscriptions.push(disposable);
-
   let replaceImgUrlDisposable = vscode.commands.registerCommand(
     "replace-imgurl",
     () => {
@@ -73,7 +72,66 @@ function activate(context) {
     }
   );
 
+  let conversionImageFormatDisposable = vscode.commands.registerCommand(
+    "conversion-image-format",
+    () => {
+      isSuccess = false;
+      vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Progress",
+          cancellable: true,
+        },
+        (progress) => {
+          return new Promise((resolve) => {
+            isSuccess = false;
+            conversionImageFormat(progress);
+            var intervalObj = setInterval(() => {
+              if (isSuccess) {
+                setTimeout(() => {
+                  clearInterval(intervalObj);
+                  resolve();
+                }, 1000);
+              }
+            }, 1000);
+          });
+        }
+      );
+    }
+  );
+
+  let clearReferenceLinkDisposable = vscode.commands.registerCommand(
+    "clear-reference-link",
+    () => {
+      isSuccess = false;
+      vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Progress",
+          cancellable: true,
+        },
+        (progress) => {
+          return new Promise((resolve) => {
+            isSuccess = false;
+            clearReferenceLink(progress);
+            var intervalObj = setInterval(() => {
+              if (isSuccess) {
+                setTimeout(() => {
+                  clearInterval(intervalObj);
+                  resolve();
+                }, 1000);
+              }
+            }, 1000);
+          });
+        }
+      );
+    }
+  );
+
+  context.subscriptions.push(disposable);
   context.subscriptions.push(replaceImgUrlDisposable);
+  context.subscriptions.push(conversionImageFormatDisposable);
+  context.subscriptions.push(clearReferenceLinkDisposable);
 }
 
 // This method is called when your extension is deactivated
@@ -111,8 +169,8 @@ async function replaceImgUrl(progress) {
       continue;
     }
     console.log(`第 ${total + 1} 张图片地址: ` + imageUrl);
+    links = await getNewUrl(total + 1, imageUrl, progress);
     total++;
-    links = await getNewUrl(imageUrl, progress);
     if (links) {
       const start = match.index + offset; // 根据替换总长度计算实际位置
       const end = start + match[0].length;
@@ -136,7 +194,85 @@ async function replaceImgUrl(progress) {
   );
 }
 
-async function getNewUrl(imageUrl, progress) {
+async function conversionImageFormat(progress) {
+  let editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    progress.report({
+      increment: 100,
+      message: "当前没有激活编辑器",
+    });
+    return;
+  }
+
+  let text = editor.document.getText();
+  let match;
+  let total = 0; // 记录图片的总数
+  let replaced = 0; // 记录替换成功的图片数量
+
+  // 匹配 Markdown 文件中的图片链接，并提取链接地址和图片描述信息
+  const regex = /!\[(.*?)\]\[(.*?)\]/g;
+  // let match;
+  while ((match = regex.exec(text)) !== null) {
+    // 记录总数
+    total++;
+    const [fullMatch, altText, refId] = match;
+    const refRegex = new RegExp(`\\[${refId}\\]:\\s*(.*)`);
+    const refMatch = refRegex.exec(text);
+    if (refMatch !== null) {
+      const imageUrl = refMatch[1];
+      const newMatch = `![${altText}](${imageUrl})`;
+      text = text.replace(fullMatch, newMatch);
+      // 记录替换成功数量
+      replaced++;
+    }
+  }
+
+  //核心代码
+  editor.edit((editBuilder) => {
+    // 从开始到结束，全量替换
+    const end = new vscode.Position(editor.document.lineCount + 1, 0);
+    editBuilder.replace(new vscode.Range(new vscode.Position(0, 0), end), text);
+  });
+
+  isSuccess = true;
+  progress.report({
+    increment: 100,
+    message: `共 ${total} 个图片规则，成功替换 ${replaced} 个规则`,
+  });
+}
+
+async function clearReferenceLink(progress) {
+  let editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    progress.report({
+      increment: 100,
+      message: "当前没有激活编辑器",
+    });
+    return;
+  }
+
+  let text = editor.document.getText();
+
+  // 删除 Markdown 文件中的链接定义
+  const refRegex = /\[(.*?)\]:\s*(.*)/g;
+  text = text.replace(refRegex, "");
+
+  //核心代码
+  editor.edit((editBuilder) => {
+    // 从开始到结束，全量替换
+    const end = new vscode.Position(editor.document.lineCount + 1, 0);
+    editBuilder.replace(new vscode.Range(new vscode.Position(0, 0), end), text);
+  });
+
+  isSuccess = true;
+  progress.report({
+    increment: 100,
+    message: `清除 Markdown 文件中的链接定义成功`,
+  });
+  // vscode.window.showInformationMessage("清除 Markdown 文件中的链接定义成功");
+}
+
+async function getNewUrl(imageIndex, imageUrl, progress) {
   //let config = vscode.workspace.getConfiguration('lsky');
   let localPath = config["tempPath"];
   if (localPath && localPath.length !== localPath.trim().length) {
@@ -146,13 +282,36 @@ async function getNewUrl(imageUrl, progress) {
     });
     return;
   }
+  let imagePath = "";
   try {
-    let imagePath = await downloadImage(imageUrl, localPath, progress);
-    let links = await lskyUpload(config, imagePath, progress);
+    imagePath = await downloadImage(imageUrl, localPath, progress);
+    let links = await lskyUpload(imageIndex, config, imagePath, progress);
     await deleteLocalPict(imagePath);
     return links;
   } catch (err) {
-    progress.report({ increment: 100, message: "上传失败！" + err.message });
+    // 失败则删除图片
+    await deleteLocalPict(imagePath);
+    // 提示错误信息
+    if (err !== undefined) {
+      if (err.message === undefined) {
+        if (err.data.message !== undefined) {
+          progress.report({
+            increment: 100,
+            message: "上传失败！" + err.data.message,
+          });
+        } else {
+          progress.report({
+            increment: 100,
+            message: "上传失败！",
+          });
+        }
+      } else {
+        progress.report({
+          increment: 100,
+          message: "上传失败！" + err.message,
+        });
+      }
+    }
     return;
   }
 }
@@ -189,7 +348,7 @@ function saveImg(progress) {
   let imagePath = getImagePath(filePath, selectText, localPath);
   createImageDirWithImagePath(imagePath)
     .then(() => saveClipboardImageToFileAndGetPath(imagePath, progress))
-    .then((imagePath) => lskyUpload(config, imagePath, progress))
+    .then((imagePath) => lskyUpload(-1, config, imagePath, progress))
     .then((links) => {
       // console.log(links);
       editor.edit((textEditorEdit) => {
@@ -200,6 +359,8 @@ function saveImg(progress) {
     })
     .then(() => deleteLocalPict(imagePath))
     .catch((err) => {
+      // 失败则删除图片
+      deleteLocalPict(imagePath);
       if (err === undefined || err === null) {
         progress.report({ increment: 100, message: "上传失败！" });
       } else {
@@ -211,8 +372,15 @@ function saveImg(progress) {
     });
 }
 
-function lskyUpload(config, imagePath, progress) {
-  progress.report({ increment: 20, message: "图片正在上传到图床..." });
+function lskyUpload(imageIndex, config, imagePath, progress) {
+  if (imageIndex === -1) {
+    progress.report({ increment: 20, message: "图片正在上传到图床..." });
+  } else {
+    progress.report({
+      increment: 20,
+      message: `第 ${imageIndex} 张图片地址: ` + imagePath,
+    });
+  }
   return new Promise(async (resolve, reject) => {
     let token = await getToken(config);
     if (!token || token.length === 0) {
