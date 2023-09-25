@@ -163,6 +163,7 @@ async function replaceImgUrl(progress) {
     if (
       domainList !== undefined &&
       domainList !== null &&
+      domainList.length > 0 &&
       domainList.includes(new URL(imageUrl).hostname)
     ) {
       console.log(`图片 ${imageUrl} 在 domainList 中，跳过`);
